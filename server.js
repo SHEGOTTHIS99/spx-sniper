@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 const TELEGRAM_TOKEN = '8711297302:AAFgsMxbXlcWtuaDbRU2Unqn2cVNW4kNbYw';
-const TELEGRAM_CHAT_ID = '957081001';
+const TELEGRAM_CHAT_ID = '8714907722';
 
 const trades = [];
 
