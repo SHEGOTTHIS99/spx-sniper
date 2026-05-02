@@ -1,0 +1,12 @@
+{
+  "name": "spx-sniper",
+  "version": "1.0.0",
+  "description": "SPX Sniper Signal Tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
