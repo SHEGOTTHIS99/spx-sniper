@@ -110,21 +110,29 @@ function monitorTrades() {
 
 setInterval(monitorTrades, 30000);
 
-// ── WEBHOOK ───────────────────────────────────────────────────
+// ── WEBHOOK — receives signals from TradingView ───────────────
 app.post('/webhook', (req, res) => {
   const data   = req.body;
   const signal = data.signal || 'UNKNOWN';
-  const price  = parseFloat(data.price || currentPrice || 0).toFixed(2);
-  const sl     = parseFloat(data.sl  || 0).toFixed(2);
-  const tp1    = parseFloat(data.tp1 || 0).toFixed(2);
-  const tp2    = parseFloat(data.tp2 || 0).toFixed(2);
-  const tp3    = parseFloat(data.tp3 || 0).toFixed(2);
-  const time   = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York'});
+  const price  = parseFloat(data.price || currentPrice || 0);
+
+  // Auto-calculate TP1, TP2, TP3, SL from entry price
+  // Using backtested optimal values: TP1=3pts, TP2=6pts, TP3=10pts, SL=4.32pts (1.8x ATR avg)
+  const isCall = signal.includes('CALL');
+  const isPut  = signal.includes('PUT');
+
+  const tp1 = isCall ? (price + 3.0).toFixed(2)  : isPut ? (price - 3.0).toFixed(2)  : '0';
+  const tp2 = isCall ? (price + 6.0).toFixed(2)  : isPut ? (price - 6.0).toFixed(2)  : '0';
+  const tp3 = isCall ? (price + 10.0).toFixed(2) : isPut ? (price - 10.0).toFixed(2) : '0';
+  const sl  = isCall ? (price - 4.32).toFixed(2) : isPut ? (price + 4.32).toFixed(2) : '0';
+
+  const time = new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' });
+  const priceStr = price.toFixed(2);
 
   const trade = {
     id: Date.now(),
     time: new Date().toISOString(),
-    signal, price, sl, tp1, tp2, tp3,
+    signal, price: priceStr, sl, tp1, tp2, tp3,
     result: (signal.includes('WAIT') || signal.includes('EXIT')) ? 'INFO' : 'OPEN',
     exitPrice: null,
     exitTime: null
