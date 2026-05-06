@@ -6,23 +6,16 @@ app.use(express.json());
 const TELEGRAM_TOKEN = '8711297302:AAFgsMxbXlcWtuaDbRU2Unqn2cVNW4kNbYw';
 const TELEGRAM_CHAT_ID = '8714907722';
 
-// ── TRADE STORAGE ────────────────────────────────────────────
 const trades = [];
 let currentPrice = 0;
 let lastPriceUpdate = null;
 
-// ── TELEGRAM ─────────────────────────────────────────────────
 function sendTelegram(message) {
   const text = encodeURIComponent(message);
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${text}&parse_mode=HTML`;
-  https.get(url, (res) => {
-    res.on('data', () => {});
-  }).on('error', (e) => {
-    console.error('Telegram error:', e.message);
-  });
+  https.get(url, (res) => { res.on('data', () => {}); }).on('error', (e) => console.error('Telegram error:', e.message));
 }
 
-// ── FETCH LIVE SPX PRICE ─────────────────────────────────────
 function fetchSPXPrice(callback) {
   const options = {
     hostname: 'query1.finance.yahoo.com',
@@ -30,7 +23,6 @@ function fetchSPXPrice(callback) {
     method: 'GET',
     headers: { 'User-Agent': 'Mozilla/5.0' }
   };
-
   const req = https.request(options, (res) => {
     let data = '';
     res.on('data', (chunk) => { data += chunk; });
@@ -43,22 +35,17 @@ function fetchSPXPrice(callback) {
           lastPriceUpdate = new Date();
           if (callback) callback(currentPrice);
         }
-      } catch (e) {
-        console.error('Price fetch error:', e.message);
-      }
+      } catch (e) { console.error('Price fetch error:', e.message); }
     });
   });
   req.on('error', (e) => console.error('Request error:', e.message));
   req.end();
 }
 
-// ── PRICE MONITOR — every 30 seconds ─────────────────────────
 function monitorTrades() {
   fetchSPXPrice((price) => {
     console.log(`SPX: ${price} @ ${new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York'})} EST`);
-
     const openTrades = trades.filter(t => t.result === 'OPEN');
-
     openTrades.forEach(trade => {
       const isCall = trade.signal.includes('CALL');
       const isPut  = trade.signal.includes('PUT');
@@ -66,43 +53,23 @@ function monitorTrades() {
       const tp1    = parseFloat(trade.tp1);
       const sl     = parseFloat(trade.sl);
       const ageMin = (new Date() - new Date(trade.time)) / 1000 / 60;
-
       if (!tp1 || !sl) return;
 
-      // CALL: TP1 hit
       if (isCall && price >= tp1) {
-        trade.result = 'WIN';
-        trade.exitPrice = price.toFixed(2);
-        trade.exitTime = new Date().toISOString();
+        trade.result = 'WIN'; trade.exitPrice = price.toFixed(2); trade.exitTime = new Date().toISOString();
         sendTelegram(`✅ <b>WIN — TP1 HIT</b>\nSignal: ${trade.signal}\nEntry: ${entry} → Exit: ${price}\n+${(tp1-entry).toFixed(2)} pts 🎯`);
-      }
-      // PUT: TP1 hit
-      else if (isPut && price <= tp1) {
-        trade.result = 'WIN';
-        trade.exitPrice = price.toFixed(2);
-        trade.exitTime = new Date().toISOString();
+      } else if (isPut && price <= tp1) {
+        trade.result = 'WIN'; trade.exitPrice = price.toFixed(2); trade.exitTime = new Date().toISOString();
         sendTelegram(`✅ <b>WIN — TP1 HIT</b>\nSignal: ${trade.signal}\nEntry: ${entry} → Exit: ${price}\n+${(entry-tp1).toFixed(2)} pts 🎯`);
-      }
-      // CALL: SL hit
-      else if (isCall && price <= sl) {
-        trade.result = 'LOSS';
-        trade.exitPrice = price.toFixed(2);
-        trade.exitTime = new Date().toISOString();
+      } else if (isCall && price <= sl) {
+        trade.result = 'LOSS'; trade.exitPrice = price.toFixed(2); trade.exitTime = new Date().toISOString();
         sendTelegram(`❌ <b>LOSS — SL HIT</b>\nSignal: ${trade.signal}\nEntry: ${entry} → Exit: ${price}\n-${(entry-sl).toFixed(2)} pts`);
-      }
-      // PUT: SL hit
-      else if (isPut && price >= sl) {
-        trade.result = 'LOSS';
-        trade.exitPrice = price.toFixed(2);
-        trade.exitTime = new Date().toISOString();
+      } else if (isPut && price >= sl) {
+        trade.result = 'LOSS'; trade.exitPrice = price.toFixed(2); trade.exitTime = new Date().toISOString();
         sendTelegram(`❌ <b>LOSS — SL HIT</b>\nSignal: ${trade.signal}\nEntry: ${entry} → Exit: ${price}\n-${(sl-entry).toFixed(2)} pts`);
-      }
-      // Auto expire after 90 mins
-      else if (ageMin > 90) {
-        trade.result = 'EXPIRED';
-        trade.exitPrice = price.toFixed(2);
-        trade.exitTime = new Date().toISOString();
-        sendTelegram(`⏰ <b>EXPIRED</b>\nSignal: ${trade.signal}\nEntry: ${entry} | Current: ${price}\nNeither TP1 nor SL hit in 90 mins`);
+      } else if (ageMin > 90) {
+        trade.result = 'EXPIRED'; trade.exitPrice = price.toFixed(2); trade.exitTime = new Date().toISOString();
+        sendTelegram(`⏰ <b>EXPIRED</b>\nSignal: ${trade.signal}\nEntry: ${entry} | Current: ${price}`);
       }
     });
   });
@@ -110,34 +77,25 @@ function monitorTrades() {
 
 setInterval(monitorTrades, 30000);
 
-// ── WEBHOOK — receives signals from TradingView ───────────────
 app.post('/webhook', (req, res) => {
   const data   = req.body;
   const signal = data.signal || 'UNKNOWN';
   const price  = parseFloat(data.price || currentPrice || 0);
-
-  // Auto-calculate TP1, TP2, TP3, SL from entry price
-  // Using backtested optimal values: TP1=3pts, TP2=6pts, TP3=10pts, SL=4.32pts (1.8x ATR avg)
   const isCall = signal.includes('CALL');
   const isPut  = signal.includes('PUT');
-
   const tp1 = isCall ? (price + 3.0).toFixed(2)  : isPut ? (price - 3.0).toFixed(2)  : '0';
   const tp2 = isCall ? (price + 6.0).toFixed(2)  : isPut ? (price - 6.0).toFixed(2)  : '0';
   const tp3 = isCall ? (price + 10.0).toFixed(2) : isPut ? (price - 10.0).toFixed(2) : '0';
   const sl  = isCall ? (price - 4.32).toFixed(2) : isPut ? (price + 4.32).toFixed(2) : '0';
-
-  const time = new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' });
-  const priceStr = price.toFixed(2);
+  const time = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York'});
 
   const trade = {
     id: Date.now(),
     time: new Date().toISOString(),
-    signal, price: priceStr, sl, tp1, tp2, tp3,
+    signal, price: price.toFixed(2), sl, tp1, tp2, tp3,
     result: (signal.includes('WAIT') || signal.includes('EXIT')) ? 'INFO' : 'OPEN',
-    exitPrice: null,
-    exitTime: null
+    exitPrice: null, exitTime: null
   };
-
   trades.push(trade);
 
   let emoji = '⚡';
@@ -146,29 +104,29 @@ app.post('/webhook', (req, res) => {
   if (signal.includes('WAIT')) emoji = '⏳';
   if (signal.includes('EXIT')) emoji = '🚨';
 
-  const msg = `${emoji} <b>SPX SNIPER</b>
-Signal: <b>${signal}</b>
-Time: ${time} EST
-Entry: <b>${price}</b>
-TP1: ${tp1} | TP2: ${tp2} | TP3: ${tp3}
-SL: ${sl}
-<i>📡 Monitoring automatically...</i>`;
-
-  sendTelegram(msg);
+  sendTelegram(`${emoji} <b>SPX SNIPER</b>\nSignal: <b>${signal}</b>\nTime: ${time} EST\nEntry: <b>${price.toFixed(2)}</b>\nTP1: ${tp1} | TP2: ${tp2} | TP3: ${tp3}\nSL: ${sl}\n<i>📡 Monitoring automatically...</i>`);
   console.log('Signal:', signal, '@', price);
   res.json({ status: 'ok', trade });
 });
 
-// ── DASHBOARD ─────────────────────────────────────────────────
 app.get('/dashboard', (req, res) => {
-  const tradeable = trades.filter(t => t.result !== 'INFO');
-  const closed    = tradeable.filter(t => t.result !== 'OPEN');
-  const wins      = closed.filter(t => t.result === 'WIN').length;
-  const losses    = closed.filter(t => t.result === 'LOSS').length;
-  const expired   = closed.filter(t => t.result === 'EXPIRED').length;
-  const open      = tradeable.filter(t => t.result === 'OPEN').length;
-  const winRate   = closed.length > 0 ? ((wins/closed.length)*100).toFixed(1) : 0;
+  const tradeable  = trades.filter(t => t.result !== 'INFO');
+  const closed     = tradeable.filter(t => t.result !== 'OPEN');
+  const wins       = closed.filter(t => t.result === 'WIN').length;
+  const losses     = closed.filter(t => t.result === 'LOSS').length;
+  const expired    = closed.filter(t => t.result === 'EXPIRED').length;
+  const open       = tradeable.filter(t => t.result === 'OPEN').length;
+  const winRate    = closed.length > 0 ? ((wins/closed.length)*100).toFixed(1) : 0;
 
+  // Today's stats
+  const today      = new Date().toLocaleDateString('en-US', {timeZone:'America/New_York'});
+  const todayTrades  = tradeable.filter(t => new Date(t.time).toLocaleDateString('en-US',{timeZone:'America/New_York'}) === today);
+  const todayClosed  = todayTrades.filter(t => t.result !== 'OPEN');
+  const todayWins    = todayClosed.filter(t => t.result === 'WIN').length;
+  const todayLosses  = todayClosed.filter(t => t.result === 'LOSS').length;
+  const todayWR      = todayClosed.length > 0 ? ((todayWins/todayClosed.length)*100).toFixed(1) : 0;
+
+  // Signal breakdown
   const callWins  = trades.filter(t => t.signal==='CALL' && t.result==='WIN').length;
   const callLoss  = trades.filter(t => t.signal==='CALL' && t.result==='LOSS').length;
   const putWins   = trades.filter(t => t.signal==='PUT'  && t.result==='WIN').length;
@@ -188,9 +146,11 @@ app.get('/dashboard', (req, res) => {
     body{background:#0d0d0d;color:#fff;font-family:-apple-system,sans-serif;padding:20px}
     h1{color:#FFD700;font-size:24px;margin-bottom:5px}
     .sub{color:#555;font-size:12px;margin-bottom:15px}
-    .pricebar{background:#1a1a1a;border-radius:10px;padding:12px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+    .pricebar{background:#1a1a1a;border-radius:10px;padding:12px 20px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
     .pricebar span{color:#888;font-size:12px}
-    .pricebar strong{color:#00FF88;font-size:22px}
+    .pricebar strong{font-size:22px}
+    .today-bar{background:#1a1a0a;border:1px solid #FFD700;border-radius:10px;padding:12px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+    .today-bar span{color:#888;font-size:12px}
     .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px}
     .stat{background:#1a1a1a;border-radius:10px;padding:15px;text-align:center}
     .stat h2{font-size:26px;font-weight:bold}
@@ -222,15 +182,23 @@ app.get('/dashboard', (req, res) => {
 
   <div class="pricebar">
     <span>Live SPX</span>
-    <strong>${currentPrice > 0 ? currentPrice.toFixed(2) : 'Fetching...'}</strong>
+    <strong class="green">${currentPrice > 0 ? currentPrice.toFixed(2) : 'Fetching...'}</strong>
     <span>${lastPriceUpdate ? lastPriceUpdate.toLocaleTimeString('en-US',{timeZone:'America/New_York'})+' EST' : '--'}</span>
   </div>
 
+  <div class="today-bar">
+    <span>📅 Today — ${today}</span>
+    <strong class="gold">${todayWR}% Win Rate</strong>
+    <span class="green">${todayWins} Wins</span>
+    <span class="red">${todayLosses} Losses</span>
+    <span class="white">${todayClosed.length} Closed</span>
+  </div>
+
   <div class="stats">
-    <div class="stat"><h2 class="gold">${winRate}%</h2><p>Win Rate</p></div>
-    <div class="stat"><h2 class="white">${closed.length}</h2><p>Closed</p></div>
-    <div class="stat"><h2 class="green">${wins}</h2><p>Wins ✅</p></div>
-    <div class="stat"><h2 class="red">${losses}</h2><p>Losses ❌</p></div>
+    <div class="stat"><h2 class="gold">${winRate}%</h2><p>All Time Win Rate</p></div>
+    <div class="stat"><h2 class="white">${closed.length}</h2><p>Total Closed</p></div>
+    <div class="stat"><h2 class="green">${wins}</h2><p>All Wins ✅</p></div>
+    <div class="stat"><h2 class="red">${losses}</h2><p>All Losses ❌</p></div>
     <div class="stat"><h2 class="gold">${open}</h2><p>Open 🔄</p></div>
     <div class="stat"><h2 class="orange">${expired}</h2><p>Expired ⏰</p></div>
   </div>
@@ -255,15 +223,16 @@ app.get('/dashboard', (req, res) => {
     <div class="bcard"><h3>🔴 PUT Entry</h3>
       <div class="brow"><span>Wins</span><span class="green">${peWins}</span></div>
       <div class="brow"><span>Losses</span><span class="red">${peLoss}</span></div>
-      <div class="brow"><span>Win Rate</span><span class="gold">${peWins+peLoss>0?((peWins/(peLoss+peWins))*100).toFixed(0):0}%</span></div>
+      <div class="brow"><span>Win Rate</span><span class="gold">${peWins+peLoss>0?((peWins/(peWins+peLoss))*100).toFixed(0):0}%</span></div>
     </div>
   </div>
 
   <h2 class="section">📋 All Signals</h2>
   <table>
-    <tr><th>Time</th><th>Signal</th><th>Entry</th><th>TP1</th><th>SL</th><th>Exit</th><th>Result</th></tr>
+    <tr><th>Date</th><th>Time</th><th>Signal</th><th>Entry</th><th>TP1</th><th>SL</th><th>Exit</th><th>Result</th></tr>
     ${trades.slice().reverse().map(t=>`
     <tr>
+      <td>${new Date(t.time).toLocaleDateString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric'})}</td>
       <td>${new Date(t.time).toLocaleTimeString('en-US',{timeZone:'America/New_York'})}</td>
       <td><span class="badge ${t.signal.includes('Entry')?'bn':t.signal.includes('CALL')?'bc':t.signal.includes('PUT')?'bp':t.signal.includes('WAIT')?'bw':'be'}">${t.signal}</span></td>
       <td>${t.price}</td>
@@ -278,8 +247,7 @@ app.get('/dashboard', (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({
-  status: 'alive',
-  spxPrice: currentPrice,
+  status: 'alive', spxPrice: currentPrice,
   lastUpdate: lastPriceUpdate,
   total: trades.length,
   open: trades.filter(t=>t.result==='OPEN').length
@@ -288,6 +256,6 @@ app.get('/health', (req, res) => res.json({
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`SPX Sniper running on port ${PORT}`);
-  sendTelegram('🚀 <b>SPX Sniper LIVE</b>\nAutomated paper testing active ✅\nSignals tracked automatically — zero input needed.');
+  sendTelegram('🚀 <b>SPX Sniper LIVE</b>\nAutomated paper testing active ✅\nSignals tracked automatically.');
   fetchSPXPrice((p) => console.log('Initial SPX price:', p));
 });
